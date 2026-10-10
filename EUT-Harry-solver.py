@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Everything Upgrade Tree – Harryho puzzle (GUI solver)
-Features: motivy (světlý/tmavý), perzistence, barevná legenda/sloupce,
-1-based idx a (r,c), 25-řádkový výstup (OK ↑, ERR, EMPTY ↓),
-P1–P4 (výrazy, rovnice s x, přiřazení a/b/x), Action & Error log (ACT/ERR/OK),
-overlay rank v mřížce, kompaktní režim s rychlým menu, Info panel i jako okno.
+Everything Upgrade Tree – Harry's puzzle (GUI solver)
+Features: themes (light/dark), persistence, color legend/columns,
+1-based idx and (r,c), 25-line output (OK ↑, ERR, EMPTY ↓),
+P1–P4 (expressions, equations with x, assignments a/b/x), Action & Error log (ACT/ERR/OK),
+overlay rank in grid, compact mode with quick menu, Info panel also as window.
 """
 from __future__ import annotations
 import ast
@@ -19,10 +19,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
-# --------------------- Parsování & Eval ---------------------
+# --------------------- Parsing & Eval ---------------------
 Coord = Tuple[int, int]
 
-# P2 – mapování symbolů na číslice
+# P2 – symbol to digit mapping
 SHIFT_MAP = {
     '!': '1', '@': '2', '#': '3', '$': '4', '%': '5',
     '^': '6', '&': '7', '*': '8', '(': '9', ')': '0'
@@ -30,11 +30,11 @@ SHIFT_MAP = {
 SHIFT_ALLOWED = set(SHIFT_MAP) \
     | set("0123456789")
 
-# P3 – formáty báze
+# P3 – base formats
 PARENS_PAT = re.compile(r'^\s*([\+\-]?[0-9A-Za-z]+)\s*\(\s*(\d{1,2})\s*\)\s*$')
 COLON_PAT  = re.compile(r'^\s*([\+\-]?[0-9A-Za-z]+)\s*:\s*(\d{1,2})\s*$')
 
-# P4 – whitelist pro bezpečný eval
+# P4 – whitelist for safe eval
 _ALLOWED_NAMES: Dict[str, object] = {
     'pi': math.pi, 'e': math.e, 'tau': math.tau,
     'abs': abs, 'sqrt': math.sqrt,
@@ -42,51 +42,33 @@ _ALLOWED_NAMES: Dict[str, object] = {
     'asin': math.asin, 'acos': math.acos, 'atan': math.atan,
     'log': math.log, 'ln': math.log, 'log10': math.log10,
     'floor': math.floor, 'ceil': math.ceil, 'round': round,
-    # faktoriál přes bezpečný wrapper (doplní se po definici _fac)
     'factorial': None,   # placeholder
     'fac': None,         # placeholder
     'pow': pow,
     'min': min, 'max': max, 'sum': sum
 }
 
-# Povolené AST uzly
+# Allowed AST nodes
 _ALLOWED_NODES = {
     ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant,
     ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
     ast.USub, ast.UAdd, ast.Load, ast.Call, ast.Name, ast.Tuple, ast.List
 }
 
-# ----------------- Bezpečný faktoriál -----------------
+# ----------------- Safe Factorial -----------------
 def _fac(x: float) -> int:
-    """
-    Bezpečná varianta faktoriálu:
-      - vyžaduje celé nezáporné číslo,
-      - toleruje integer-like float (např. 5.0),
-      - jinak vyhodí srozumitelný ValueError.
-    """
     if abs(x - round(x)) > 1e-12:
-        raise ValueError("Argument faktoriálu musí být celé číslo")
+        raise ValueError("Factorial argument must be an integer")
     n = int(round(x))
     if n < 0:
-        raise ValueError("Faktoriál je definován jen pro nezáporná celá čísla")
+        raise ValueError("Factorial is only defined for non-negative integers")
     return math.factorial(n)
 
-# zaregistruj _fac do whitelistu
 _ALLOWED_NAMES['fac'] = _fac
 _ALLOWED_NAMES['factorial'] = _fac
 
-# --------------- normalizace výrazu (P4) ---------------
+# --------------- expression normalization (P4) ---------------
 def apply_factorials(s: str) -> str:
-    """
-    Převod postfixového '!' (i vícenásobného) na volání fac(...).
-    Příklady:
-      5!        -> fac(5)
-      (3+2)!    -> fac((3+2))
-      a!!       -> fac(fac(a))
-      foo(3)!   -> fac(foo(3))
-    Pozn.: '!!' = opakované použití faktoriálu, nikoli double factorial.
-    """
-    # 1) Nejprve nahrazuj '(...)!'/ 'f(...)!' – vše, co končí na ')'
     paren_pat = re.compile(r'(\([^()]*\))(!+)')
     while True:
         new_s = paren_pat.sub(lambda m: ('fac(' * len(m.group(2))) + m.group(1) + (')' * len(m.group(2))), s)
@@ -94,7 +76,6 @@ def apply_factorials(s: str) -> str:
             break
         s = new_s
 
-    # 2) Čísla / identifikátory před '!'
     atom_pat = re.compile(r'(\b(?:\d+(?:\.\d+)?|[A-Za-z_]\w*))(!+)')
     def repl_atom(m):
         expr, bangs = m.group(1), m.group(2)
@@ -105,11 +86,10 @@ def apply_factorials(s: str) -> str:
 
 def normalize_expr(expr: str) -> str:
     s = expr.strip()
-    s = s.replace('^', '**')  # ^ -> **
-    s = re.sub(r'\bmod\b', '%', s, flags=re.I)  # mod -> %
-    s = s.replace('π', 'pi')  # π -> pi
+    s = s.replace('^', '**')
+    s = re.sub(r'\bmod\b', '%', s, flags=re.I)
+    s = s.replace('π', 'pi')
 
-    # implicitní násobení (číslo/var/závorky) – 1. průchod
     patterns = [
         (r'(\d)\s*([abxABX])', r'\1*\2'),
         (r'([abxABX])\s*(\d)', r'\1*\2'),
@@ -122,17 +102,12 @@ def normalize_expr(expr: str) -> str:
     for pat, repl in patterns:
         s = re.sub(pat, repl, s)
 
-    # postfixové faktoriály '!' -> volání fac(...)
     s = apply_factorials(s)
 
-    # implicitní násobení – 2. průchod (kvůli novým sekvencím po nahrazení '!'),
-    # + speciální případy okolo 'fac('
     post_fac_patterns = [
-        # pokud něco stojí těsně před 'fac('
         (r'(\d)\s*(fac\()', r'\1*\2'),
         (r'([abxABX])\s*(fac\()', r'\1*\2'),
         (r'(\))\s*(fac\()', r'\1*\2'),
-        # a když 'fac(... )' stojí před číslem/var
         (r'(\))\s*([abxABX])', r'\1*\2'),
         (r'(\))\s*(\d)', r'\1*\2'),
     ]
@@ -143,7 +118,7 @@ def normalize_expr(expr: str) -> str:
 
 def _safe_eval_node(node: ast.AST, env: Dict[str, object]):
     if type(node) not in _ALLOWED_NODES:
-        raise ValueError(f"Nepovolený prvek výrazu: {type(node).__name__}")
+        raise ValueError(f"Disallowed expression element: {type(node).__name__}")
 
     if isinstance(node, ast.Expression):
         return _safe_eval_node(node.body, env)
@@ -153,19 +128,19 @@ def _safe_eval_node(node: ast.AST, env: Dict[str, object]):
             return node.value
         if isinstance(node.value, float) and node.value.is_integer():
             return int(node.value)
-        raise ValueError("Pouze číselné literály jsou povolené")
+        raise ValueError("Only numeric literals are allowed")
 
     if isinstance(node, ast.Name):
         name = node.id
         if name in env:
             return env[name]
-        raise ValueError(f"Nedefinovaná proměnná '{name}'")
+        raise ValueError(f"Undefined variable '{name}'")
 
     if isinstance(node, ast.UnaryOp):
         v = _safe_eval_node(node.operand, env)
         if isinstance(node.op, ast.UAdd): return v
         if isinstance(node.op, ast.USub): return -v
-        raise ValueError("Nepodporovaný unární operátor")
+        raise ValueError("Unsupported unary operator")
 
     if isinstance(node, ast.BinOp):
         l = _safe_eval_node(node.left, env)
@@ -180,21 +155,21 @@ def _safe_eval_node(node: ast.AST, env: Dict[str, object]):
         if isinstance(node.op, ast.FloorDiv): return l // r
         if isinstance(node.op, ast.Mod): return l % r
         if isinstance(node.op, ast.Pow): return pow(l, r)
-        raise ValueError("Nepodporovaný binární operátor")
+        raise ValueError("Unsupported binary operator")
 
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name):
-            raise ValueError("Povoleny jsou jen jednoduché funkce")
+            raise ValueError("Only simple functions are allowed")
         fn = node.func.id
         if fn not in env or not callable(env[fn]):
-            raise ValueError(f"Funkce '{fn}' není povolena")
+            raise ValueError(f"Function '{fn}' is not allowed")
         args = [_safe_eval_node(a, env) for a in node.args]
         return env[fn](*args)
 
     if isinstance(node, (ast.Tuple, ast.List)):
         return sum(_safe_eval_node(elt, env) for elt in node.elts)
 
-    raise ValueError("Nepodporovaná struktura výrazu")
+    raise ValueError("Unsupported expression structure")
 
 def eval_math_with_vars(expr: str, vars_map: Optional[Dict[str, float]] = None) -> float:
     s = normalize_expr(expr)
@@ -204,7 +179,7 @@ def eval_math_with_vars(expr: str, vars_map: Optional[Dict[str, float]] = None) 
         for k, v in vars_map.items():
             kl = k.lower()
             if kl not in ('a', 'b', 'c', 'x'):
-                raise ValueError(f"Povoleny jsou jen proměnné a,b,c,x (máš '{k}')")
+                raise ValueError(f"Only variables a,b,c,x are allowed (got '{k}')")
             env[kl] = v
     return _safe_eval_node(tree, env)
 
@@ -216,12 +191,12 @@ def parse_plain_number(s: str) -> float:
     try:
         return float(s2)
     except ValueError:
-        raise ValueError("Neplatné čisté číslo")
+        raise ValueError("Invalid plain number")
 
 def decode_shifted_number(s: str) -> float:
     s2 = s.strip()
     if not s2 or any(ch not in SHIFT_MAP for ch in s2):
-        raise ValueError("Neplatný shifted formát")
+        raise ValueError("Invalid shifted format")
     mapped = ''.join(SHIFT_MAP[ch] for ch in s2)
     return float(int(mapped))
 
@@ -229,18 +204,17 @@ def parse_base_number(s: str) -> float:
     t = s.strip()
     m = PARENS_PAT.match(t) or COLON_PAT.match(t)
     if not m:
-        raise ValueError("Neplatný zápis báze (NUM(BASE) nebo NUM:BASE)")
+        raise ValueError("Invalid base notation (NUM(BASE) or NUM:BASE)")
     num_str, base_str = m.groups()
     base = int(base_str)
     if not (2 <= base <= 36):
-        raise ValueError("Podporované báze jsou 2..36")
+        raise ValueError("Supported bases are 2..36")
     try:
         return float(int(num_str, base))
     except ValueError:
-        # tohle je „invalid literal“ → dovolíme fallback na P4
         raise
 
-# --- P4: assignment chain / lineární rovnice / čistý výraz ---
+# --- P4: assignment chain / linear equation / pure expression ---
 ASSIGN_SPLIT = re.compile(r'\s*[,;]\s*')
 
 def is_assignment_chain(s: str) -> bool:
@@ -254,20 +228,20 @@ def evaluate_assignment_chain(s: str) -> tuple[float, Dict[str, float]]:
     env: Dict[str, float] = {}
     parts = ASSIGN_SPLIT.split(text)
     if not parts:
-        raise ValueError("Prázdná série přiřazení")
+        raise ValueError("Empty assignment chain")
     for raw in parts:
         if not raw.strip():
             continue
         if '=' not in raw:
-            raise ValueError(f"Člen '{raw}' neobsahuje '='")
+            raise ValueError(f"Term '{raw}' does not contain '='")
         name, expr = map(str.strip, raw.split('=', 1))
         name = name.lower()
         if name not in ('a', 'b', 'c', 'x'):
-            raise ValueError(f"Povoleny jsou pouze proměnné a,b,c,x (máš '{name}')")
+            raise ValueError(f"Only variables a,b,c,x are allowed (got '{name}')")
 
         env[name] = eval_math_with_vars(expr, env)
     if 'x' not in env:
-        raise ValueError("Série přiřazení nedefinuje proměnnou 'x'")
+        raise ValueError("Assignment chain does not define variable 'x'")
     return env['x'], env
 
 def _has_x(node: ast.AST) -> bool:
@@ -277,7 +251,7 @@ def _has_x(node: ast.AST) -> bool:
 
 def _eval_const_node(node: ast.AST, env: Dict[str, float]) -> float:
     if _has_x(node):
-        raise ValueError("Očekávána konstanta (bez x)")
+        raise ValueError("Expected constant (without x)")
     expr_ast = ast.Expression(body=node)
     return float(_safe_eval_node(expr_ast, dict(_ALLOWED_NAMES, **env)))
 
@@ -298,34 +272,34 @@ def _linear_form(node: ast.AST, env: Dict[str, float]) -> Tuple[float, float]:
             l, r = node.left, node.right
             lh, rh = _has_x(l), _has_x(r)
             if lh and rh:
-                raise ValueError("Nelineární výraz: násobení dvou členů obsahujících x")
+                raise ValueError("Non-linear expression: multiplication of two terms containing x")
             k, c = _linear_form(l if lh else r, env)
             const = _eval_const_node(r if lh else l, env)
             return k * const, c * const
         if isinstance(node.op, (ast.Div, ast.FloorDiv)):
             if _has_x(node.right):
-                raise ValueError("Nelineární výraz: x ve jmenovateli")
+                raise ValueError("Non-linear expression: x in denominator")
             k, c = _linear_form(node.left, env)
             const = _eval_const_node(node.right, env)
             if isinstance(node.op, ast.FloorDiv):
                 if abs(k) > 1e-12:
-                    raise ValueError("Nelineární výraz: // s proměnnou x")
+                    raise ValueError("Non-linear expression: // with variable x")
                 return 0.0, math.floor(c / const)
             return k / const, c / const
         if isinstance(node.op, ast.Pow):
-            raise ValueError("Nelineární výraz: mocnina s x")
+            raise ValueError("Non-linear expression: power with x")
     if isinstance(node, ast.Call):
         for a in node.args:
             if _has_x(a):
-                raise ValueError("Nelineární výraz: funkce aplikovaná na x")
+                raise ValueError("Non-linear expression: function applied to x")
         return 0.0, _eval_const_node(node, env)
-    raise ValueError("Nepodporovaná konstrukce v lineární rovnici")
+    raise ValueError("Unsupported construction in linear equation")
 
 def solve_linear_equation_x(equation: str, env: Optional[Dict[str, float]] = None) -> float:
     env = dict(env or {})
     s = normalize_expr(equation)
     if s.count('=') != 1:
-        raise ValueError("Očekávám právě jednu '=' pro lineární rovnici")
+        raise ValueError("Expected exactly one '=' for linear equation")
     left, right = map(str.strip, s.split('=', 1))
     L, R = ast.parse(left, mode='eval'), ast.parse(right, mode='eval')
     k1, c1 = _linear_form(L.body, env)
@@ -333,15 +307,15 @@ def solve_linear_equation_x(equation: str, env: Optional[Dict[str, float]] = Non
     k, d = k1 - k2, c2 - c1
     if abs(k) < 1e-12:
         if abs(d) < 1e-12:
-            raise ValueError("Nekonečně mnoho řešení (totožnost)")
+            raise ValueError("Infinitely many solutions (identity)")
         else:
-            raise ValueError("Žádné řešení (rozpornost)")
+            raise ValueError("No solution (contradiction)")
     return d / k
 
 def p4_value_and_display(text: str) -> tuple[float, str]:
     s = text.strip()
     if not s:
-        raise ValueError("Prázdný vstup")
+        raise ValueError("Empty input")
     if is_assignment_chain(s):
         xval, _ = evaluate_assignment_chain(s)
         return xval, f"x = {xval}"
@@ -351,38 +325,28 @@ def p4_value_and_display(text: str) -> tuple[float, str]:
     val = eval_math_with_vars(s, {})
     return float(val), str(val)
 
-# --- Autodetekce typu buňky: P1 → P2 → P3 (fallback) → P4 ---
+# --- Cell type auto-detection: P1 → P2 → P3 (fallback) → P4 ---
 def autodetect_and_parse(s: str) -> Tuple[str, float, str]:
-    """
-    Vrací (typ, numeric_value, display_text). Typ ∈ {'P1','P2','P3','P4'}.
-    P3 vs. P4: pokud zápis vypadá jako NUM(BASE)/NUM:BASE a padne na invalid literal,
-    pokračujeme jako P4; formátové chyby P3 necháme propadnout jako P3-ERR.
-    """
     txt = s.strip()
-    # P1 – čisté číslo
     try:
         v = parse_plain_number(txt)
         return 'P1', v, str(v)
     except Exception:
         pass
-    # P2 – shifted !@#$%^&*()
     try:
         v = decode_shifted_number(txt)
         return 'P2', v, str(v)
     except Exception:
         pass
-    # P3 – NUM(BASE) / NUM:BASE (s fallbackem na P4)
     m = PARENS_PAT.match(txt) or COLON_PAT.match(txt)
     if m:
         try:
-            v = parse_base_number(txt)  # může vyhodit ValueError
+            v = parse_base_number(txt)
             return 'P3', v, str(v)
         except ValueError as e:
             msg = str(e)
-            if ("Podporované báze" in msg) or ("Neplatný zápis báze" in msg):
+            if ("Supported bases" in msg) or ("Invalid base notation" in msg):
                 raise
-            # jinak fallback → P4
-    # P4 – výrazy/rovnice/přiřazení
     v, disp = p4_value_and_display(txt)
     return 'P4', v, disp
 
@@ -407,22 +371,17 @@ def compute_maps(grid_texts: List[List[str]]):
 
 def stable_sorted(entries_map: dict) -> List[Tuple[int, int, str, float]]:
     items = [(r, c, typ, val) for (r, c), (typ, val) in entries_map.items()]
-    items.sort(key=lambda t: (t[3], t[0]*5 + t[1]))  # value asc; stable by linear index
+    items.sort(key=lambda t: (t[3], t[0]*5 + t[1]))
     return items
 
-# ---------------- GUI – palety ----------------
-# Barvy sloupců (na obou motivech čitelné)
-COL_IDX   = "#80CBC4"  # teal
-COL_RANK  = "#C3E88D"  # green
-COL_TYP   = "#F78C6C"  # orange
-COL_VALUE = "#FFCB6B"  # yellow
-COL_RC    = "#82AAFF"  # blue
-COL_STATE = "#C792EA"  # purple
+# ---------------- GUI – palettes ----------------
+COL_IDX   = "#80CBC4"
+COL_RANK  = "#C3E88D"
+COL_TYP   = "#F78C6C"
+COL_VALUE = "#FFCB6B"
+COL_RC    = "#82AAFF"
+COL_STATE = "#C792EA"
 
-# Řezy sloupců v monospaced textu (srovnané s formátováním níže)
-COL_SLICES = [(0, 3), (5, 9), (11, 14), (16, 28), (30, 36), (38, None)]
-
-# Palety motivů
 PALETTE_DARK = dict(
     BG="#121212", FG="#E0E0E0", PANEL_BG="#1E1E1E",
     EMPTY_BG="#2B2B2B", ERROR_BG="#5A1D1D", OK_BG="#1E1E1E",
@@ -437,19 +396,17 @@ PALETTE_LIGHT = dict(
 MONO_FONT = ("Consolas", 11)
 UI_FONT   = ("Segoe UI", 10)
 
-# Responsive breakpoint pro kompaktní layout (šířka hlavního okna v px)
 COMPACT_BREAKPOINT = 980
 
-# Perzistence
 CONFIG_PATH = Path.home() / ".eut_harry_gui.json"
 DEFAULT_CONFIG = {
     "theme": "dark",
     "rgb": [18, 18, 18],
-    "root_geometry": "1080x780+200+100",
-    "out_geometry": "700x780+1100+60",
-    "console_geometry": "700x300+1100+860",
+    "root_geometry": "650x780+200+100",
+    "out_geometry": "700x780+900+60",
+    "console_geometry": "700x300+900+860",
     "save_grid": False,
-    "grid": [],  # 5x5 strings
+    "grid": [],
     "start_compact": False
 }
 
@@ -464,9 +421,8 @@ class OverlayWindow:
         self.parent = parent
         self.is_locked = False
 
-        # 1. Řídicí okénko
         self.ctrl = tk.Toplevel(parent)
-        self.ctrl.title("HUD Overlay - Ovládání")
+        self.ctrl.title("HUD Overlay - Control")
         self.ctrl.geometry("340x210")
         self.ctrl.attributes("-topmost", True)
         self.ctrl.resizable(False, False)
@@ -479,7 +435,7 @@ class OverlayWindow:
 
         self.btn_toggle = tk.Button(
             self.ctrl, 
-            text="🔒 Zamknout & Zapnout proklikávání", 
+            text="🔒 Lock & Enable Click-through", 
             command=self.toggle_clickthrough, 
             bg="#4CAF50", 
             fg="white", 
@@ -489,8 +445,7 @@ class OverlayWindow:
         )
         self.btn_toggle.pack(pady=5)
 
-        # Posuvník pro nastavení opacity podkladu
-        tk.Label(self.ctrl, text="Opacita políček:").pack(pady=(8, 2))
+        tk.Label(self.ctrl, text="Cell Opacity:").pack(pady=(8, 2))
         self.alpha_var = tk.DoubleVar(value=0.6)
         self.slider_alpha = ttk.Scale(
             self.ctrl, 
@@ -501,7 +456,6 @@ class OverlayWindow:
         )
         self.slider_alpha.pack(fill='x', padx=20)
 
-        # 2. Průhledné Overlay okno
         self.overlay = tk.Toplevel(parent)
         self.overlay.title("Roblox HUD Grid")
         self.overlay.geometry("400x400+500+200")
@@ -543,7 +497,7 @@ class OverlayWindow:
             return
 
         if not hasattr(ctypes, "windll"):
-            messagebox.showwarning("Systém", "Proklikávání je dostupné pouze na Windows.")
+            messagebox.showwarning("System", "Click-through is only available on Windows.")
             return
 
         if not self.is_locked:
@@ -560,7 +514,7 @@ class OverlayWindow:
 
             self.is_locked = True
             self.btn_toggle.config(
-                text="🔓 Odemknout (posun / změna velikosti)", 
+                text="🔓 Unlock (move / resize)", 
                 bg="#f44336"
             )
         else:
@@ -577,12 +531,11 @@ class OverlayWindow:
 
             self.is_locked = False
             self.btn_toggle.config(
-                text="🔒 Zamknout & Zapnout proklikávání", 
+                text="🔒 Lock & Enable Click-through", 
                 bg="#4CAF50"
             )
 
     def update_ranks(self, rank_map: Dict[Tuple[int, int], int]):
-        """Aktualizuje čísla v mřížce podle vypočítaného rank_map."""
         if not (self.overlay and tk.Toplevel.winfo_exists(self.overlay)):
             return
         for r in range(5):
@@ -607,13 +560,11 @@ class OverlayWindow:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Harryho puzzle – Everything Upgrade Tree (GUI)")
+        self.root.title("Harry's Puzzle – Everything Upgrade Tree (GUI)")
         self.root.geometry(DEFAULT_CONFIG["root_geometry"])
 
-        # motiv (výchozí tmavý)
         self.C = dict(PALETTE_DARK)
 
-        # ttk styl
         self.style = ttk.Style(self.root)
         try:
             self.style.theme_use('clam')
@@ -621,44 +572,21 @@ class App:
             pass
         self._configure_styles()
 
-        # --- horní panel ---
-        self.top_panel = ttk.Frame(self.root); self.top_panel.pack(fill='x', padx=12, pady=(10, 6))
-
-        # motiv toggle
         self.light_mode = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.top_panel, text="Světlý motiv", variable=self.light_mode, command=self.on_theme_toggle).grid(row=0, column=0, padx=(0, 12), sticky='w')
-
-        # RGB
-        ttk.Label(self.top_panel, text="Barva pozadí (RGB):").grid(row=0, column=1, padx=(6, 12), sticky='w')
-        self.r_var = tk.IntVar(value=18); self.g_var = tk.IntVar(value=18); self.b_var = tk.IntVar(value=18)
-        self._mk_slider(self.top_panel, "R", self.r_var, 0, 2)
-        self._mk_slider(self.top_panel, "G", self.g_var, 0, 4)
-        self._mk_slider(self.top_panel, "B", self.b_var, 0, 6)
-        self.color_preview = tk.Canvas(self.top_panel, width=56, height=20, highlightthickness=0, bg=self.C['BG'])
-        self.color_preview.grid(row=0, column=8, padx=(12, 0))
-
-        # perzistence
+        self.r_var = tk.IntVar(value=18)
+        self.g_var = tk.IntVar(value=18)
+        self.b_var = tk.IntVar(value=18)
         self.save_grid_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.top_panel, text="Ukládat obsah mřížky", variable=self.save_grid_var).grid(row=0, column=9, padx=(12, 8))
-        ttk.Button(self.top_panel, text="Uložit nastavení", command=self.save_config).grid(row=0, column=10, padx=(4, 8))
-        ttk.Button(self.top_panel, text="Obnovit výchozí nastavení", command=self.reset_to_defaults).grid(row=0, column=11, padx=(4, 0))
 
-        # Action & Error log – tlačítko otevřít konzoli
-        ttk.Button(self.top_panel, text="Otevřít konzoli (ACT/ERR/OK)", command=self.open_console).grid(row=0, column=12, padx=(12, 0))
-        
-        # HUD Overlay tlačítko
-        ttk.Button(self.top_panel, text="🎯 HUD Overlay", command=self.open_overlay).grid(row=0, column=13, padx=(12, 0))
-        self.overlay_win: Optional[OverlayWindow] = None
-
-        # RGB callbacky
         self.r_var.trace_add('write', self.update_bg_color)
         self.g_var.trace_add('write', self.update_bg_color)
         self.b_var.trace_add('write', self.update_bg_color)
 
-        # --- hlavní grid + side panel ---
-        self.grid_panel = ttk.Frame(self.root); self.grid_panel.pack(side='left', padx=(12, 6), pady=6, anchor='n')
-        self.side_panel = ttk.Frame(self.root); self.side_panel.pack(side='left', fill='y', padx=(6, 12), pady=6, anchor='n')
-        ttk.Label(self.grid_panel, text="Vstup 5×5 (auto detekce typu na buňku)").grid(row=0, column=0, columnspan=5, pady=(0, 6))
+        self.overlay_win: Optional[OverlayWindow] = None
+
+        self.grid_panel = ttk.Frame(self.root); self.grid_panel.pack(side='left', padx=(12, 6), pady=12, anchor='n')
+        self.side_panel = ttk.Frame(self.root); self.side_panel.pack(side='left', fill='y', padx=(6, 12), pady=12, anchor='n')
+        ttk.Label(self.grid_panel, text="Input 5×5 (auto-detect type per cell)").grid(row=0, column=0, columnspan=5, pady=(0, 6))
 
         self.entries: List[List[tk.Entry]] = []
         self.entry_vars: List[List[tk.StringVar]] = []
@@ -675,7 +603,6 @@ class App:
                 row_e.append(ent); row_v.append(var)
             self.entries.append(row_e); self.entry_vars.append(row_v)
 
-        # ---- overlay rank labels (5×5) ----
         self.rank_labels: List[List[tk.Label]] = []
         for r in range(5):
             row = []
@@ -685,77 +612,61 @@ class App:
                 lab.place(x=0, y=0)
                 row.append(lab)
             self.rank_labels.append(row)
-        # aktualizace pozice overlayů při změně layoutu
         self.grid_panel.bind("<Configure>", lambda e: self.position_overlays())
 
-        # --- ovladače pod gridem ---
         self.btns_panel = ttk.Frame(self.grid_panel); self.btns_panel.grid(row=7, column=0, columnspan=5, pady=(10, 0))
-        ttk.Button(self.btns_panel, text="Vyčistit vše", command=self.clear_all).grid(row=0, column=0, padx=4)
-        ttk.Button(self.btns_panel, text="Zkopírovat výstup (25 řádků)", command=self.copy_output).grid(row=0, column=1, padx=4)
+        ttk.Button(self.btns_panel, text="Clear All", command=self.clear_all).grid(row=0, column=0, padx=4)
+        ttk.Button(self.btns_panel, text="Copy Output (25 lines)", command=self.copy_output).grid(row=0, column=1, padx=4)
         ttk.Button(self.btns_panel, text="HUD Overlay", command=self.open_overlay).grid(row=0, column=2, padx=4)
 
-        # --- rychlé ovládání pro malé displeje (menu + info) ---
         self.bottom_menu = ttk.Frame(self.grid_panel)
         self.bottom_menu.grid(row=9, column=0, columnspan=5, pady=(8, 6))
         ttk.Button(self.bottom_menu, text="☰ Menu", command=self.open_quick_menu).grid(row=0, column=0, padx=4)
         self.side_visible = tk.BooleanVar(value=True)
-        ttk.Button(self.bottom_menu, text="ℹ️ Info panel", command=self.toggle_side_panel).grid(row=0, column=1, padx=4)
+        ttk.Button(self.bottom_menu, text="ℹ️ Info Panel", command=self.toggle_side_panel).grid(row=0, column=1, padx=4)
 
-        # status
-        self.status = ttk.Label(self.grid_panel, text="Připraveno", anchor='w')
+        self.status = ttk.Label(self.grid_panel, text="Ready", anchor='w')
         self.status.grid(row=8, column=0, columnspan=5, sticky='we', pady=(10, 0))
 
-        # --- side info (panel) ---
         self.info_text = tk.Text(self.side_panel, width=48, height=28, bg=self.C['PANEL_BG'], fg=self.C['FG'],
                                  insertbackground=self.C['FG'], bd=0, relief='flat', font=MONO_FONT)
         self.info_text.pack(fill='both', expand=True)
         self.info_text.insert('1.0', self._help_text())
         self.info_text.config(state='disabled')
 
-        # --- Info jako okno (volitelné) ---
         self.info_as_window = tk.BooleanVar(value=False)
         self.info_window = None
         self.info_window_text = None
 
-        # --- výstupní okno ---
         self.out = tk.Toplevel(self.root)
-        self.out.title("Výstup – 25 řádků (OK ↑, ERR, EMPTY ↓)")
+        self.out.title("Output – 25 lines (OK ↑, ERR, EMPTY ↓)")
         self.out.geometry(DEFAULT_CONFIG["out_geometry"])
 
-        # legenda (barevná)
         self.legend_text = tk.Text(self.out, height=3, bg=self.C['BG'], fg=self.C['FG'], bd=0,
                                    relief='flat', wrap='word', font=("Segoe UI", 9))
         self.legend_text.pack(fill='x', padx=8, pady=(8, 4))
         self._build_legend()
 
-        # výstupní tabulka
         self.out_text = tk.Text(self.out, bg=self.C['PANEL_BG'], fg=self.C['FG'], insertbackground=self.C['FG'],
                                 bd=0, relief='flat', font=MONO_FONT)
         self.out_text.pack(fill='both', expand=True, padx=8, pady=8)
         self._init_output_tags()
 
-        # konzole (Action & Error log) – lazy
         self.console = None
         self.console_text = None
         self.console_filters = {"ACT": tk.BooleanVar(value=True),
                                 "ERR": tk.BooleanVar(value=True),
                                 "OK":  tk.BooleanVar(value=True)}
         self.console_autoscroll = tk.BooleanVar(value=True)
-        self._log_buffer: List[Tuple[str, str, str]] = []  # (ts, level, msg)
+        self._log_buffer: List[Tuple[str, str, str]] = []
         self._prev_errors: Dict[Tuple[int, int], str] = {}
 
-        # perzistence a zavírání
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.out.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # aplikuj barvy + načti konfiguraci
         self._apply_window_colors()
         self.load_config()
 
-        # responsive: sleduj změnu velikosti hlavního okna
-        self.root.bind("<Configure>", self._on_root_resize)
-
-        # první vyhodnocení
         self.pending_after: Optional[str] = None
         self._last_lines: List[str] = []
         self.evaluate()
@@ -771,37 +682,36 @@ class App:
         self.evaluate()
         self.log("ACT", "HUD Overlay opened")
 
-    # --------------- Quick menu & panel toggling ---------------
     def open_quick_menu(self):
         if hasattr(self, "_quick_menu") and self._quick_menu and tk.Toplevel.winfo_exists(self._quick_menu):
             self._quick_menu.deiconify(); self._quick_menu.lift()
             return
         self._quick_menu = tk.Toplevel(self.root)
-        self._quick_menu.title("Rychlé menu")
+        self._quick_menu.title("Quick Menu")
         self._quick_menu.configure(bg=self.C['BG'])
         self._quick_menu.resizable(False, False)
 
-        frm_act = ttk.LabelFrame(self._quick_menu, text="Akce"); frm_act.pack(fill='x', padx=10, pady=(10, 6))
-        ttk.Button(frm_act, text="Vyčistit vše", command=self.clear_all).pack(side='left', padx=4, pady=6)
-        ttk.Button(frm_act, text="Zkopírovat výstup", command=self.copy_output).pack(side='left', padx=4, pady=6)
-        ttk.Button(frm_act, text="HUD Overlay", command=self.open_overlay).pack(side='left', padx=4, pady=6)  # <-- ZDE
-        ttk.Button(frm_act, text="Konzole (ACT/ERR/OK)", command=self.open_console).pack(side='left', padx=4, pady=6)
+        frm_act = ttk.LabelFrame(self._quick_menu, text="Actions"); frm_act.pack(fill='x', padx=10, pady=(10, 6))
+        ttk.Button(frm_act, text="Clear All", command=self.clear_all).pack(side='left', padx=4, pady=6)
+        ttk.Button(frm_act, text="Copy Output", command=self.copy_output).pack(side='left', padx=4, pady=6)
+        ttk.Button(frm_act, text="HUD Overlay", command=self.open_overlay).pack(side='left', padx=4, pady=6)
+        ttk.Button(frm_act, text="Console (ACT/ERR/OK)", command=self.open_console).pack(side='left', padx=4, pady=6)
 
-        frm_view = ttk.LabelFrame(self._quick_menu, text="Zobrazení"); frm_view.pack(fill='x', padx=10, pady=6)
-        ttk.Checkbutton(frm_view, text="Světlý motiv", variable=self.light_mode, command=self.on_theme_toggle).pack(side='left', padx=4, pady=6)
-        ttk.Checkbutton(frm_view, text="Zobrazit Info panel", variable=self.side_visible, command=self.toggle_side_panel).pack(side='left', padx=4, pady=6)
-        ttk.Checkbutton(frm_view, text="Info jako okno (Toplevel)", variable=self.info_as_window, command=self.on_info_as_window_toggle).pack(side='left', padx=12, pady=6)
-        ttk.Button(frm_view, text="Otevřít Info okno", command=self.open_info_window).pack(side='left', padx=6, pady=6)
+        frm_view = ttk.LabelFrame(self._quick_menu, text="View"); frm_view.pack(fill='x', padx=10, pady=6)
+        ttk.Checkbutton(frm_view, text="Light Theme", variable=self.light_mode, command=self.on_theme_toggle).pack(side='left', padx=4, pady=6)
+        ttk.Checkbutton(frm_view, text="Show Info Panel", variable=self.side_visible, command=self.toggle_side_panel).pack(side='left', padx=4, pady=6)
+        ttk.Checkbutton(frm_view, text="Info as Window (Toplevel)", variable=self.info_as_window, command=self.on_info_as_window_toggle).pack(side='left', padx=12, pady=6)
+        ttk.Button(frm_view, text="Open Info Window", command=self.open_info_window).pack(side='left', padx=6, pady=6)
 
-        frm_rgb = ttk.LabelFrame(self._quick_menu, text="Barva pozadí (RGB)"); frm_rgb.pack(fill='x', padx=10, pady=6)
+        frm_rgb = ttk.LabelFrame(self._quick_menu, text="Background Color (RGB)"); frm_rgb.pack(fill='x', padx=10, pady=6)
         self._mk_slider(frm_rgb, "R", self.r_var, 0, 0)
         self._mk_slider(frm_rgb, "G", self.g_var, 0, 2)
         self._mk_slider(frm_rgb, "B", self.b_var, 0, 4)
 
-        frm_set = ttk.LabelFrame(self._quick_menu, text="Nastavení"); frm_set.pack(fill='x', padx=10, pady=(6, 10))
-        ttk.Checkbutton(frm_set, text="Ukládat obsah mřížky", variable=self.save_grid_var).pack(side='left', padx=4, pady=6)
-        ttk.Button(frm_set, text="Uložit nastavení", command=self.save_config).pack(side='left', padx=4, pady=6)
-        ttk.Button(frm_set, text="Obnovit výchozí", command=self.reset_to_defaults).pack(side='left', padx=4, pady=6)
+        frm_set = ttk.LabelFrame(self._quick_menu, text="Settings"); frm_set.pack(fill='x', padx=10, pady=(6, 10))
+        ttk.Checkbutton(frm_set, text="Save Grid Content", variable=self.save_grid_var).pack(side='left', padx=4, pady=6)
+        ttk.Button(frm_set, text="Save Settings", command=self.save_config).pack(side='left', padx=4, pady=6)
+        ttk.Button(frm_set, text="Reset to Defaults", command=self.reset_to_defaults).pack(side='left', padx=4, pady=6)
 
     def on_info_as_window_toggle(self):
         if self.info_as_window.get():
@@ -821,7 +731,6 @@ class App:
                                             insertbackground=self.C['FG'], bd=0, relief='flat', font=MONO_FONT)
             self.info_window_text.pack(fill='both', expand=True, padx=8, pady=8)
             self.info_window.protocol("WM_DELETE_WINDOW", self.close_info_window)
-            # když je info jako okno, skryj panel
             if self.side_visible.get():
                 self.side_visible.set(False)
                 self.toggle_side_panel()
@@ -838,7 +747,6 @@ class App:
         self.info_as_window.set(False)
 
     def toggle_side_panel(self):
-        """Zobrazí/skrývá postranní Info panel – NEzobrazuje panel, pokud je aktivní Info-okno."""
         if self.info_as_window.get():
             try:
                 self.side_panel.pack_forget()
@@ -846,41 +754,16 @@ class App:
                 pass
             return
         if self.side_visible.get():
-            # přepnout na skrytí
             try:
                 self.side_panel.pack_forget()
             except Exception:
                 pass
             self.side_visible.set(False)
         else:
-            self.side_panel.pack(side='left', fill='y', padx=(6, 12), pady=6, anchor='n')
+            self.side_panel.pack(side='left', fill='y', padx=(6, 12), pady=12, anchor='n')
             self.side_visible.set(True)
             self.position_overlays()
 
-    def _on_root_resize(self, event):
-        """Jednoduchý responsive: při malé šířce schovej horní + boční panel (ne však Info-okno)."""
-        try:
-            w = self.root.winfo_width()
-        except Exception:
-            return
-        if w < COMPACT_BREAKPOINT:
-            try:
-                self.top_panel.pack_forget()
-            except Exception:
-                pass
-            if self.side_visible.get():
-                self.side_visible.set(False)
-                self.toggle_side_panel()
-        else:
-            try:
-                self.top_panel.pack_forget()
-            except Exception:
-                pass
-            self.top_panel.pack(fill='x', padx=12, pady=(10, 6))
-            if self.side_visible.get() and not self.info_as_window.get():
-                self.toggle_side_panel()
-
-    # ---------------- Styl, legenda, barvení ----------------
     def _configure_styles(self):
         self.root.configure(bg=self.C['BG'])
         self.style.configure("TLabel", background=self.C['BG'], foreground=self.C['FG'], font=UI_FONT)
@@ -891,7 +774,7 @@ class App:
     def _apply_window_colors(self):
         try:
             self.root.configure(bg=self.C['BG']); self.out.configure(bg=self.C['BG'])
-            for w in (self.grid_panel, self.side_panel, self.top_panel):
+            for w in (self.grid_panel, self.side_panel):
                 w.configure(style="TFrame")
         except Exception:
             pass
@@ -900,12 +783,10 @@ class App:
             self.legend_text.configure(bg=self.C['BG'], fg=self.C['FG'])
         if self.out_text:
             self.out_text.configure(bg=self.C['PANEL_BG'], fg=self.C['FG'], insertbackground=self.C['FG'])
-        # přebarvit vstupy + overlay bg
         for r in range(5):
             for c in range(5):
                 self.entries[r][c].configure(fg=self.C['FG'], insertbackground=self.C['FG'])
                 self.rank_labels[r][c].configure(bg=self.C['OK_BG'])
-        # Info okno
         if self.info_window_text:
             try:
                 self.info_window.configure(bg=self.C['BG'])
@@ -935,15 +816,15 @@ class App:
         self.legend_text.tag_configure('lg_err',   foreground=self.C['ERR_TEXT'])
         self.legend_text.tag_configure('lg_empty', foreground=self.C['EMPTY_TEXT'])
 
-        text = ("Legenda: "
-                "idx = lineární index (1–25), "
-                "rank = pořadí kliknutí (jen OK), "
+        text = ("Legend: "
+                "idx = linear index (1–25), "
+                "rank = click rank (OK only), "
                 "typ = P1/P2/P3/P4, "
-                "výstup = číslo nebo „x = …“, "
-                "(r,c) = souřadnice 1–5, "
-                "stav = OK/ERR/EMPTY\n"
-                "Řazení: OK nahoře vzestupně podle hodnoty (stabilní při rovnosti), "
-                "ERR a EMPTY dole podle idx.")
+                "output = number or \"x = …\", "
+                "(r,c) = coordinates 1–5, "
+                "state = OK/ERR/EMPTY\n"
+                "Sorting: OK on top ascending by value (stable on tie), "
+                "ERR and EMPTY at bottom by idx.")
         self.legend_text.insert('1.0', text)
 
         def _tag_word(word, tag):
@@ -955,8 +836,8 @@ class App:
                 idx = f"{pos}+{len(word)}c"
 
         for word, tag in [("idx", "lg_idx"), ("rank", "lg_rank"), ("typ", "lg_typ"),
-                          ("výstup", "lg_val"), ("(r,c)", "lg_rc"), ("stav", "lg_state"),
-                          ("OK", "lg_ok"), ("ERR", "lg_err"), ("EMPTY", "lg_empty"), ("Řazení:", "lg_sep")]:
+                          ("output", "lg_val"), ("(r,c)", "lg_rc"), ("state", "lg_state"),
+                          ("OK", "lg_ok"), ("ERR", "lg_err"), ("EMPTY", "lg_empty"), ("Sorting:", "lg_sep")]:
             _tag_word(word, tag)
         self.legend_text.configure(state='disabled')
 
@@ -972,7 +853,6 @@ class App:
         self.out_text.tag_configure('header',    foreground=self.C['FG'], font=("Consolas", 11, "bold"))
 
     def _apply_column_colors(self, total_lines: int):
-        # header + separator
         self.out_text.tag_add('header', "1.0", "1.end")
         self.out_text.tag_add('sep_line', "2.0", "2.end")
 
@@ -982,39 +862,39 @@ class App:
                 continue
 
             parts = line.split()
-            col = 0
-            idx = 0
+            if len(parts) < 6:
+                continue
 
-            for part in parts:
-                start = line.find(part, idx)
+            state = parts[-1]
+            if state == "ERR":
+                self.out_text.tag_add('lg_err', f"{ln}.0", f"{ln}.end")
+                continue
+            elif state == "EMPTY":
+                self.out_text.tag_add('lg_empty', f"{ln}.0", f"{ln}.end")
+                continue
+
+            # Dynamické mapování podle mezer (tokenů) – zvládne jakékoliv x = ... rozložení
+            current_idx = 0
+            for i, part in enumerate(parts):
+                start = line.find(part, current_idx)
                 end = start + len(part)
-
-                if col == 0:
+                
+                if i == 0:
                     tag = 'col_idx'
-                elif col == 1:
+                elif i == 1:
                     tag = 'col_rank'
-                elif col == 2:
+                elif i == 2:
                     tag = 'col_typ'
-                elif col == 3:
-                    tag = 'col_val'
-                elif col == 4:
+                elif i == len(parts) - 2:
                     tag = 'col_rc'
-                elif col == 5:
+                elif i == len(parts) - 1:
                     tag = 'col_state'
                 else:
-                    tag = None
+                    tag = 'col_val'
 
-                if tag is not None:
-                    self.out_text.tag_add(
-                        tag,
-                        f"{ln}.{start}",
-                        f"{ln}.{end}"
-                    )
+                self.out_text.tag_add(tag, f"{ln}.{start}", f"{ln}.{end}")
+                current_idx = end
 
-                idx = end
-                col += 1
-
-    # --------------- Overlay rank v gridu ---------------
     def position_overlays(self):
         self.root.update_idletasks()
         for r in range(5):
@@ -1038,12 +918,10 @@ class App:
                 else:
                     rk = rank_map.get((r, c))
                     lab.config(text=str(rk) if rk is not None else "")
-        # barvy overlayů dle motivu
         for r in range(5):
             for c in range(5):
                 self.rank_labels[r][c].configure(bg=self.C['OK_BG'], fg=COL_RANK)
 
-    # --------------- Perzistence a obsluha GUI ---------------
     def load_config(self):
         cfg = DEFAULT_CONFIG.copy()
         if CONFIG_PATH.exists():
@@ -1052,20 +930,16 @@ class App:
                 cfg.update(data)
             except Exception:
                 pass
-        # Motiv
         self.light_mode.set(cfg.get("theme", "dark") == "light")
-        self.on_theme_toggle()  # aplikuje paletu i styly
-        # RGB
+        self.on_theme_toggle()
         r, g, b = cfg.get("rgb", [18, 18, 18])
         self.r_var.set(int(r)); self.g_var.set(int(g)); self.b_var.set(int(b))
         self.update_bg_color()
-        # Geometrie
         try:
             self.root.geometry(cfg.get("root_geometry", DEFAULT_CONFIG["root_geometry"]))
             self.out.geometry(cfg.get("out_geometry", DEFAULT_CONFIG["out_geometry"]))
         except Exception:
             pass
-        # Ukládání mřížky
         self.save_grid_var.set(bool(cfg.get("save_grid", False)))
         grid = cfg.get("grid", [])
         if self.save_grid_var.get() and isinstance(grid, list) and len(grid) == 5:
@@ -1076,15 +950,6 @@ class App:
                         self.entry_vars[r][c].set(str(grid[r][c]))
                     except Exception:
                         pass
-        # Start v kompaktním režimu?
-        if cfg.get("start_compact", False):
-            try:
-                self.top_panel.pack_forget()
-            except Exception:
-                pass
-            if self.side_visible.get():
-                self.side_visible.set(False)
-                self.toggle_side_panel()
         self.log("ACT", "config loaded")
 
     def save_config(self):
@@ -1095,7 +960,6 @@ class App:
             "out_geometry": self.out.winfo_geometry(),
             "console_geometry": self.console.winfo_geometry() if self.console else DEFAULT_CONFIG["console_geometry"],
             "save_grid": self.save_grid_var.get(),
-            # uložíme, zda je okno pod breakpointem (kompaktní režim)
             "start_compact": (self.root.winfo_width() < COMPACT_BREAKPOINT),
         }
         if self.save_grid_var.get():
@@ -1103,10 +967,10 @@ class App:
             cfg["grid"] = grid
         try:
             CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-            self.status.config(text=f"Nastavení uloženo → {CONFIG_PATH}")
+            self.status.config(text=f"Settings saved → {CONFIG_PATH}")
             self.log("ACT", "config saved")
         except Exception as e:
-            self.status.config(text=f"Ukládání selhalo: {e}")
+            self.status.config(text=f"Save failed: {e}")
             self.log("ERR", f"config save failed: {e}")
 
     def on_close(self):
@@ -1121,49 +985,40 @@ class App:
 
     def reset_to_defaults(self):
         ok = messagebox.askyesno(
-            "Obnovit výchozí nastavení",
-            "Vrátit aplikaci do výchozího stavu (tmavý motiv, RGB 18/18/18, výchozí okna, prázdná mřížka) a smazat uložený konfigurační soubor?"
+            "Reset to Defaults",
+            "Reset application to default state (dark theme, RGB 18/18/18, default windows, empty grid) and delete saved configuration file?"
         )
         if not ok:
             self.log("ACT", "reset cancelled")
             return
-        # motiv + styly
         self.light_mode.set(False)
         self.C = dict(PALETTE_DARK)
         self._configure_styles()
         self._apply_window_colors()
         self._build_legend()
         self._init_output_tags()
-        # RGB
         r, g, b = DEFAULT_CONFIG["rgb"]
         self.r_var.set(r); self.g_var.set(g); self.b_var.set(b)
         self.update_bg_color()
-        # geometrie
         try:
             self.root.geometry(DEFAULT_CONFIG["root_geometry"])
             self.out.geometry(DEFAULT_CONFIG["out_geometry"])
         except Exception:
             pass
-        # mřížka
         for r in range(5):
             for c in range(5):
                 self.entry_vars[r][c].set("")
         self.save_grid_var.set(False)
-        # smazat config
         try:
             if CONFIG_PATH.exists():
                 CONFIG_PATH.unlink()
         except Exception:
             pass
         self.evaluate()
-        self.status.config(text="Vráceno na výchozí nastavení (config odstraněn)")
+        self.status.config(text="Reset to defaults (config removed)")
         self.log("ACT", "reset to defaults")
 
-    # ---------------- GUI helpers ----------------
-    # ===== ENTER / SHIFT+ENTER NAVIGATION (SAFE, NO GUI CHANGES) =====
-
     def _enable_enter_navigation(self):
-        # plochý seznam Entry widgetů v pořadí řádek-po-řádku
         self._entry_list = [e for row in self.entries for e in row]
         self._entry_index = {e: i for i, e in enumerate(self._entry_list)}
 
@@ -1183,7 +1038,7 @@ class App:
             return "break"
 
         idx = self._entry_index[w]
-        idx = (idx + delta) % len(self._entry_list)  # ✅ warp
+        idx = (idx + delta) % len(self._entry_list)
 
         nxt = self._entry_list[idx]
         nxt.focus_set()
@@ -1196,20 +1051,18 @@ class App:
         s.grid(row=row, column=col+1, padx=(6, 12))
 
     def update_bg_color(self, *args):
-        # RGB override pouze pro „BG“ oken/panelů (motiv drží kontrasty)
         r, g, b = self.r_var.get(), self.g_var.get(), self.b_var.get()
         r = max(0, min(255, r)); g = max(0, min(255, g)); b = max(0, min(255, b))
         color = f"#{r:02x}{g:02x}{b:02x}"
         try:
             self.root.configure(bg=color); self.out.configure(bg=color)
-            self.grid_panel.configure(style="TFrame"); self.side_panel.configure(style="TFrame"); self.top_panel.configure(style="TFrame")
+            self.grid_panel.configure(style="TFrame"); self.side_panel.configure(style="TFrame")
         except Exception:
             pass
         try:
             self.legend_text.configure(bg=color)
         except Exception:
             pass
-        self.color_preview.configure(bg=color)
         self.log("ACT", f"rgb={r},{g},{b}")
 
     def clear_all(self):
@@ -1228,41 +1081,36 @@ class App:
     def get_grid_texts(self) -> List[List[str]]:
         return [[self.entry_vars[r][c].get() for c in range(5)] for r in range(5)]
 
-    # ---------------- Evaluate + Output + Logging ----------------
     def evaluate(self):
         self.pending_after = None
         texts = self.get_grid_texts()
         entries_map, display_map, errors_map, empty_set = compute_maps(texts)
 
-        # barvy buněk dle stavu
         for r in range(5):
             for c in range(5):
                 self.entries[r][c].configure(bg=self.C['EMPTY_BG'] if (r, c) in empty_set else self.C['OK_BG'])
         for (r, c), _ in errors_map.items():
             self.entries[r][c].configure(bg=self.C['ERROR_BG'])
 
-        # --- Sestav Info obsah ---
         info_lines: List[str] = []
         if entries_map:
-            info_lines.append("Detekované buňky (validní):")
+            info_lines.append("Detected cells (valid):")
             for (r, c), (typ, val) in sorted(entries_map.items(), key=lambda t: (t[0][0]*5 + t[0][1])):
                 disp = display_map.get((r, c), str(val))
                 info_lines.append(f"[{r+1},{c+1}] {typ:<2} = {disp}")
         else:
-            info_lines.append("Zatím žádná validní data.")
+            info_lines.append("No valid data yet.")
         if errors_map:
             info_lines.append("")
-            info_lines.append("Chyby:")
+            info_lines.append("Errors:")
             for (r, c), msg in sorted(errors_map.items(), key=lambda t: (t[0][0]*5 + t[0][1])):
                 info_lines.append(f"[{r+1},{c+1}] {msg}")
         info_buf = "\n".join(info_lines)
 
-        # Zapiš Info do panelu
         self.info_text.config(state='normal'); self.info_text.delete('1.0', 'end')
         self.info_text.insert('1.0', info_buf)
         self.info_text.config(state='disabled')
 
-        # Zapiš i do Info okna (pokud existuje)
         if self.info_window_text:
             try:
                 self.info_window_text.config(state='normal'); self.info_window_text.delete('1.0', 'end')
@@ -1270,7 +1118,7 @@ class App:
                 self.info_window_text.config(state='disabled')
             except Exception:
                 pass
-        # Výstup: 25 řádků (OK ↑, ERR, EMPTY ↓), 1-based idx & (r,c)
+
         valid_sorted = stable_sorted(entries_map)
         rank_map = {(r, c): i for i, (r, c, _, _) in enumerate(valid_sorted, start=1)}
         err_sorted = sorted(errors_map.keys(), key=lambda rc: rc[0]*5 + rc[1])
@@ -1296,7 +1144,7 @@ class App:
                     r, c = divmod(idx1-1, 5)
                     ordered_rows.append((idx1, "-", "-", "-", f"({r+1},{c+1})", "EMPTY"))
 
-        header = f"{'idx':>3} {'rank':>4} {'typ':^3} {'výstup':>12} {'(r,c)':>6} {'stav'}"
+        header = f"{'idx':>3} {'rank':>4} {'typ':^3} {'output':>12} {'(r,c)':>6} {'state'}"
         sep = "-" * len(header)
         lines = [header, sep]
         for (idx1, rank, typ, disp, rc_str, state) in ordered_rows:
@@ -1308,18 +1156,15 @@ class App:
         self._init_output_tags()
         self._apply_column_colors(total_lines=len(lines))
 
-        # Overlay (rank u OK buněk)
         self.update_overlays(rank_map, errors_map, empty_set)
         self.position_overlays()
 
-        # Status + logging
         valid_cnt, err_cnt, emp_cnt = len(valid_sorted), len(err_sorted), len(emp_sorted)
         self.status.config(
-            text=f"Validních: {valid_cnt} Chyb: {err_cnt} Prázdných: {emp_cnt} Řazení: OK podle hodnoty; ERR/EMPTY podle idx"
+            text=f"Valid: {valid_cnt} Errors: {err_cnt} Empty: {emp_cnt} Sorting: OK by value; ERR/EMPTY by idx"
         )
         self.log("ACT", f"evaluate: ok={valid_cnt} err={err_cnt} empty={emp_cnt}")
 
-        # zaloguj nové chyby a vyřešené chyby
         new_err_keys = set(errors_map.keys())
         old_err_keys = set(self._prev_errors.keys())
         for rc in sorted(new_err_keys - old_err_keys, key=lambda rc: rc[0]*5 + rc[1]):
@@ -1329,7 +1174,6 @@ class App:
             r, c = rc
             self.log("OK", f"cell({r+1},{c+1}) fixed")
             
-        # Aktualizace HUD Overlay okna (pokud existuje)
         if self.overlay_win:
             self.overlay_win.update_ranks(rank_map)
 
@@ -1338,16 +1182,15 @@ class App:
     def copy_output(self):
         txt = "\n".join(self._last_lines) if self._last_lines else ""
         self.root.clipboard_clear(); self.root.clipboard_append(txt)
-        self.status.config(text="Výstup (25 řádků) zkopírován do schránky")
+        self.status.config(text="Output (25 lines) copied to clipboard")
         self.log("ACT", "output copied")
 
-    # --------------- Action & Error log ---------------
     def open_console(self):
         if self.console and tk.Toplevel.winfo_exists(self.console):
             self.console.deiconify(); self.console.lift()
             return
         self.console = tk.Toplevel(self.root)
-        self.console.title("Konzole – Action & Error log")
+        self.console.title("Console – Action & Error log")
         self.console.geometry(DEFAULT_CONFIG["console_geometry"])
         self.console.configure(bg=self.C['BG'])
 
@@ -1364,7 +1207,7 @@ class App:
                                     font=("Consolas", 10))
         self.console_text.pack(fill='both', expand=True, padx=8, pady=(0, 8))
         self.console_text.tag_configure("TS",  foreground=self.C['EMPTY_TEXT'])
-        self.console_text.tag_configure("ACT", foreground="#00BCD4")  # cyan
+        self.console_text.tag_configure("ACT", foreground="#00BCD4")
         self.console_text.tag_configure("ERR", foreground=self.C['ERR_TEXT'])
         self.console_text.tag_configure("OK",  foreground="#8BC34A")
         self.refresh_console()
@@ -1405,21 +1248,20 @@ class App:
         self.refresh_console()
         self.log("ACT", "console cleared")
 
-    # ---------------- Main & help ----------------
     @staticmethod
     def _help_text() -> str:
         return (
-            "Nápověda – typy vstupu (auto detekce):\n"
-            " P1 – Číslo: 42, -7, 3.14, 1e3\n"
-            " P2 – Shift číslo: !@ (->12), %^& (->567), )! (->01)\n"
-            " P3 – Báze: 1A(16), 101(2), Z:36, -A:16\n"
-            " P4 – Výraz: 2^8, 3*sqrt(4)+pi, 10 mod 3, floor(5/2), 5!, (3+2)!, a!!\n"
-            " – Rovnice: 2x+5 = 11 → x = 3 (lineární v x)\n"
-            " – Přiřazení: a=54.4, b=a^2, x=ceil(a+b/7)! → x = ...\n"
+            "Help – input types (auto-detection):\n"
+            " P1 – Number: 42, -7, 3.14, 1e3\n"
+            " P2 – Shift number: !@ (->12), %^& (->567), )! (->01)\n"
+            " P3 – Base: 1A(16), 101(2), Z:36, -A:16\n"
+            " P4 – Expression: 2^8, 3*sqrt(4)+pi, 10 mod 3, floor(5/2), 5!, (3+2)!, a!!\n"
+            " – Equation: 2x+5 = 11 → x = 3 (linear in x)\n"
+            " – Assignment: a=54.4, b=a^2, x=ceil(a+b/7)! → x = ...\n"
             "\n"
-            "Indexy a souřadnice ve výstupu jsou 1-based: idx ∈ {1..25}, (r,c) ∈ {1..5}×{1..5}\n"
-            "Výstup: 25 řádků – nahoře OK (podle hodnoty), uprostřed ERR, dole EMPTY.\n"
-            "Přepínač motivu vlevo nahoře; RGB posuvníky ladí barvu pozadí (BG).\n"
+            "Indices and coordinates in output are 1-based: idx ∈ {1..25}, (r,c) ∈ {1..5}×{1..5}\n"
+            "Output: 25 lines – OK on top (by value), ERR in middle, EMPTY at bottom.\n"
+            "Access options, light theme, and RGB controls anytime via the ☰ Menu button.\n"
         )
 
 def main():
