@@ -1,1 +1,0 @@
-- **DavidWritesStuff** - [GitHub Profile](https://github.com/DavidWritesStuff))  
